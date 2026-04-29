@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>SQL Island - Professional SCORM Edition</title>
+    <script src="sql-asm.js"></script>
+    <style>
+        :root { --red: #e74c3c; --dark: #2c3e50; --bg: #f4f4f4; --green: #27ae60; --yellow: #f1c40f; --blue: #3498db; --grey: #7f8c8d; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--bg); margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        
+        #sidebar { width: 280px; background: var(--dark); color: white; padding: 20px; border-left: 5px solid var(--red); overflow-y: auto; font-size: 0.9em; flex-shrink: 0; }
+        .table-info { background: #34495e; padding: 10px; margin-bottom: 10px; border-radius: 4px; border-left: 3px solid var(--red); }
+        .table-name { color: var(--red); font-weight: bold; margin-bottom: 3px; font-size: 1.1em; }
+
+        #main { flex: 1; display: flex; flex-direction: column; padding: 15px; overflow: hidden; }
+        #img-container { display: flex; justify-content: space-between; height: 160px; margin-bottom: 10px; background: white; border-radius: 8px; padding: 5px; border: 1px solid #ccc; flex-shrink: 0; }
+        .avatar { width: 140px; height: 100%; background-size: contain; background-repeat: no-repeat; background-position: center; transition: background 0.3s; }
+
+        #bubble { background: var(--red); color: white; padding: 15px; border-radius: 10px; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.2); display: flex; flex-direction: column; height: 180px; position: relative; flex-shrink: 0; }
+        #story-scroll { overflow-y: auto; flex: 1; white-space: pre-wrap; line-height: 1.4; padding-right: 10px; font-size: 1.05em; }
+        #status-msg { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.4); font-style: italic; color: var(--yellow); min-height: 1.2em; font-size: 0.95em; }
+        #score-display { position: absolute; top: 10px; right: 20px; background: rgba(0,0,0,0.3); padding: 5px 12px; border-radius: 5px; font-size: 0.8em; text-align: right; }
+
+        #query-log { background: #1e1e1e; color: #d4d4d4; padding: 8px; height: 80px; border-radius: 5px; font-family: 'Consolas', monospace; overflow-y: auto; margin-bottom: 10px; border: 1px solid #444; font-size: 0.85em; flex-shrink: 0; }
+        #sql-editor { width: 100%; height: 70px; font-family: 'Consolas', monospace; font-size: 1.1em; padding: 10px; border-radius: 5px; border: 2px solid #ccc; box-sizing: border-box; flex-shrink: 0; }
+        
+        .controls { margin: 10px 0; display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+        button { padding: 10px 18px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.95em; }
+        .btn-run { background: var(--green); color: white; }
+        .btn-help { background: var(--yellow); color: black; }
+        .btn-next { background: var(--blue); color: white; }
+        .btn-exit { background: var(--grey); color: white; } /* Der neue Beenden-Button */
+        button:disabled { background: #bdc3c7; cursor: not-allowed; opacity: 0.6; }
+
+        #result-area { flex: 1; overflow: auto; background: white; border-radius: 5px; border: 2px solid #34495e; margin-top: 5px; min-height: 120px; }
+        #result-table { width: 100%; border-collapse: collapse; min-width: 400px; }
+        #result-table th { background: #ecf0f1; color: var(--dark); padding: 10px; border: 1px solid #ccc; position: sticky; top: 0; font-size: 0.9em; }
+        #result-table td { padding: 10px; border: 1px solid #ccc; text-align: center; font-size: 0.9em; color: #333; }
+    </style>
+</head>
+<body>
+
+<div id="main">
+    <div id="img-container">
+        <div id="img-l" class="avatar"></div>
+        <div id="img-r" class="avatar"></div>
+    </div>
+    <div id="bubble">
+        <div id="score-display">Punkte: <span id="user-score">0</span> / <span id="max-score">0</span></div>
+        <div id="story-scroll">Lade SQL Island...</div>
+        <div id="status-msg"></div>
+    </div>
+    <div id="query-log"></div>
+    <textarea id="sql-editor" placeholder="GIB DEINEN SQL-BEFEHL EIN..."></textarea>
+    <div class="controls">
+        <button id="btn-run" class="btn-run" onclick="processSQL()">AUSFÜHREN</button>
+        <button id="btn-help" class="btn-help" onclick="showSolution()">LÖSUNG</button>
+        <button id="btn-next" class="btn-next" onclick="nextStep()" disabled>WEITER</button>
+        <button id="btn-exit" class="btn-exit" onclick="exitGame()">BEENDEN</button>
+    </div>
+    <div id="result-area">
+        <table id="result-table"><thead id="table-head"></thead><tbody id="table-body"></tbody></table>
+    </div>
+</div>
+
+<div id="sidebar">
+    <h2 style="color: var(--red); text-align: center; margin-top: 0;">SQL Island</h2>
+    <div class="table-info"><div class="table-name">DORF</div>dorfnr, name, haeuptling</div>
+    <div class="table-info"><div class="table-name">BEWOHNER</div>bewohnernr, name, dorfnr, geschlecht, beruf, gold, status</div>
+    <div class="table-info"><div class="table-name">GEGENSTAND</div>gegenstand, besitzer</div>
+</div>
+
+<script>
+/** SCORM API Logik **/
+let scormAPI = null;
+let interactionCount = 0;
+let userScore = 0;
+let maxPointsPossible = 0;
+let helpUsedForCurrent = false;
+
+function findAPI(win) { try { while ((win.API == null) && (win.parent != null) && (win.parent != win)) { win = win.parent; } return win.API; } catch (e) { return null; } }
+function initSCORM() { scormAPI = findAPI(window); if (scormAPI) { scormAPI.LMSInitialize(""); scormAPI.LMSSetValue("cmi.core.score.min", "0"); } }
+
+function exitGame() {
+    if (confirm("Möchtest du das Spiel beenden und deinen Punktestand speichern?")) {
+        if (scormAPI) {
+            scormAPI.LMSCommit("");
+            scormAPI.LMSFinish("");
+        }
+        window.close();
+        // Fallback falls window.close blockiert wird
+        alert("Du kannst dieses Fenster nun schließen.");
+    }
+}
+
+/** VOLLSTÄNDIGE ÜBUNGEN **/
+const exercises = [
+    {desc: "Hui, was ist passiert? Es scheint, als habe ich als einziger den Flugzeugabsturz überlebt. Gut, dass ich auf dieser Insel gelandet bin. Hier gibt es ja sogar ein paar Dörfer.", sol: "SELECT * FROM dorf", auto: true, l: "avatar", r: "", pts: 0},
+    {desc: "Und jede Menge Bewohner gibt es hier auch. Zeige mir die Liste der Bewohner.", sol: "SELECT * FROM bewohner", auto: false, l: "avatar_lachend", r: "", pts: 1, ans: "Wow, hier ist einiges los!"},
+    {desc: "Mensch, was bin ich hungrig. Ich suche mir erst einmal einen Metzger, bei dem ich eine Scheibe Wurst schnorren kann.", sol: "SELECT * FROM bewohner WHERE beruf = 'Metzger'", auto: true, l: "avatar", r: "", pts: 0},
+    {desc: "Hier, lass es dir schmecken! Und pass bei deiner Reise gut auf, dass du dich von bösen Bewohnern fern hälst, solange du unbewaffnet bist. Denn nicht jeder hier ist friedlich!", desc2: "Danke Erich! Nagut, dann muss ich mal schauen, welche Bewohner friedlich sind.", sol: "SELECT * FROM bewohner WHERE status = 'friedlich'", auto: false, l: "avatar_wurst", r: "erich", pts: 1},
+    {desc: "Früher oder später brauche ich aber ein Schwert. Lasst uns einen friedlichen Waffenschmied suchen, der mir ein Schwert schmieden kann. (Hinweis: Bedingungen im WHERE-Teil kannst du mit AND verknüpfen)", sol: "SELECT * FROM bewohner WHERE beruf = 'Waffenschmied' AND status = 'friedlich'", auto: false, l: "avatar", r: "", pts: 1},
+    {desc: "Hm, das sind sehr wenige. Vielleicht gibt es noch andere friedliche Schmiede, z.B. Hufschmied, Schmied, Waffenschmied, etc. Probiere beruf LIKE '%schmied', um alle Bewohner zu finden, deren Beruf mit 'schmied' endet.", sol: "SELECT * FROM bewohner WHERE beruf LIKE '%schmied' AND status = 'friedlich'", auto: false, l: "avatar_ueberrascht", r: "", pts: 1, ans: "Das sieht schon besser aus!"},
+    {desc: "Hallo Fremder, wohin des Wegs? Ich bin Paul, der Bürgermeister von Affenstadt. Ich trage dich gerne als Bewohner meines Dorfes ein.", sol: "INSERT INTO bewohner (name, dorfnr, geschlecht, beruf, gold, status) VALUES ('Fremder', 1, '?', '?', 0, '?')", auto: true, l: "avatar_freuend", r: "paul", pts: 0},
+    {desc: "Hey, nenn mich doch nicht Fremder! Naja, egal. Wie ist eigentlich meine bewohnernr? (Tipp: Statt '*' kannst du auch Spaltennamen mit Komma getrennt angeben).", sol: "SELECT bewohnernr FROM bewohner WHERE name = 'Fremder'", auto: false, l: "avatar_ueberrascht", r: "paul", pts: 1},
+    {desc: "Hallo Ernst! Was kostet bei dir ein Schwert?", desc2: "Ich schmiede dir ein Schwert für nur 150 Gold. Billiger bekommst du es nirgendwo! Wie viel Gold hast du momentan?", sol: "SELECT gold FROM bewohner WHERE bewohnernr = 20", auto: false, l: "avatar", r: "ernst", pts: 1},
+    {desc: "Mist, ich habe ja noch gar kein Gold. Liste alle Gegenstände auf, die niemandem gehören. Tipp: WHERE besitzer IS NULL.", sol: "SELECT * FROM gegenstand WHERE besitzer IS NULL", auto: false, l: "avatar_wuetend", r: "", pts: 1, ans: "So viele tolle Sachen!"},
+    {desc: "Lasst uns die Kaffeetasse einsammeln. Eine Kaffeetasse kann man immer mal gebrauchen.", sol: "UPDATE gegenstand SET besitzer = 20 WHERE gegenstand = 'Kaffeetasse'", auto: true, l: "avatar_freuend", r: "items", pts: 0},
+    {desc: "Kennst du einen Trick, wie wir alle Gegenstände auf einmal einsammeln können, die niemandem gehören?", sol: "UPDATE gegenstand SET besitzer = 20 WHERE besitzer IS NULL", auto: false, l: "avatar_freuend", r: "items", pts: 2},
+    {desc: "Jawoll! Welche Gegenstände besitze ich nun?", sol: "SELECT * FROM gegenstand WHERE besitzer = 20", auto: false, l: "avatar", r: "items", pts: 1},
+    {desc: "Finde friedliche Bewohner mit dem Beruf Haendler oder Kaufmann. (Hinweis: Klammerung beachten)", sol: "SELECT * FROM bewohner WHERE (beruf = 'Haendler' OR beruf = 'Kaufmann') AND status = 'friedlich'", auto: false, l: "avatar", r: "", pts: 2},
+    {desc: "Ich interessiere mich für den Ring und die Teekanne. Gib mir bitte die beiden Gegenstände. Meine Bewohnernummer ist übrigens 15.", sol: "UPDATE gegenstand SET besitzer = 15 WHERE gegenstand = 'Teekanne' OR gegenstand = 'Ring'", auto: false, l: "avatar", r: "helga", pts: 2, ans: "Dankeschön!"},
+    {desc: "Hier hast du einen Haufen Gold!", sol: "UPDATE bewohner SET gold = gold + 120 WHERE bewohnernr = 20", auto: true, l: "avatar_freuend", r: "helga_geld", pts: 0},
+    {desc: "Ändere deinen Namen von Fremder auf Peter.", sol: "UPDATE bewohner SET name = 'Peter' WHERE bewohnernr = 20", auto: false, l: "avatar_wuetend", r: "", pts: 2},
+    {desc: "Ich verdiene mir ein bisschen Geld als Bäcker. Zeige mir alle Bäcker, sortiert nach Gold (DESC).", sol: "SELECT * FROM bewohner WHERE beruf = 'Baecker' ORDER BY gold DESC", auto: false, l: "avatar", r: "", pts: 2, ans: "Ach, der Paul! Den kenn ich doch!"},
+    {desc: "Hi Peter! Du willst als Bäcker arbeiten? (8 Std. später...) Hier dein Gold!", sol: "UPDATE bewohner SET gold = gold + 100 - 150 WHERE bewohnernr = 20", auto: true, l: "avatar_winkend", r: "paul_baecker", pts: 0},
+    {desc: "Hier ist dein neues Schwert, Potor! Nun kannst du überall hin!", desc2: "Ich heiße Peter! Aber trotzdem danke.", sol: "INSERT INTO gegenstand (gegenstand, besitzer) VALUES ('Schwert', 20)", auto: true, l: "avatar_schwert_freuend", r: "ernst", pts: 0},
+    {desc: "Gibt es auf der Insel einen Piloten? Er könnte mich nach Hause fliegen.", sol: "SELECT * FROM bewohner WHERE beruf = 'Pilot'", auto: false, l: "avatar_schwert", r: "ernst", pts: 1, ans: "Oh, er hat den Status 'gefangen'."},
+    {desc: "Es ist schrecklich! Dirty Dieter hält den Piloten gefangen! Finde heraus, in welchem Dorf Dirty Dieter wohnt.", sol: "SELECT dorf.name FROM dorf, bewohner WHERE dorf.dorfnr = bewohner.dorfnr AND bewohner.name = 'Dirty Dieter'", auto: true, l: "avatar_schwert", r: "ernst", pts: 0},
+    {desc: "Suche den Häuptling des Dorfes Zwiebelhausen.", sol: "SELECT bewohner.name FROM dorf, bewohner WHERE dorf.haeuptling = bewohner.bewohnernr AND dorf.name = 'Zwiebelhausen'", auto: false, l: "avatar_schwert_freuend", r: "ernst", pts: 3, ans: "Juhu! Ich hab's!"},
+    {desc: "Hm, wie viele Einwohner hat eigentlich Zwiebelhausen?", sol: "SELECT COUNT(*) FROM bewohner, dorf WHERE dorf.dorfnr = bewohner.dorfnr AND dorf.name = 'Zwiebelhausen'", auto: true, l: "avatar_schwert", r: "", pts: 0},
+    {desc: "Suche heraus, wie viele Frauen es in Zwiebelhausen gibt. (geschlecht = 'w')", sol: "SELECT COUNT(*) FROM bewohner, dorf WHERE dorf.dorfnr = bewohner.dorfnr AND dorf.name = 'Zwiebelhausen' AND bewohner.geschlecht = 'w'", auto: false, l: "avatar_schwert", r: "fritz", pts: 3},
+    {desc: "Wie heißt sie?", sol: "SELECT bewohner.name FROM bewohner, dorf WHERE dorf.dorfnr = bewohner.dorfnr AND dorf.name = 'Zwiebelhausen' AND bewohner.geschlecht = 'w'", auto: false, l: "avatar_schwert_freuend", r: "fritz", pts: 3, ans: "So! Dann gehe ich jetzt da hin!"},
+    {desc: "Peter, gib mir alles Gold von Gurkendorf und ich lasse den Piloten frei!", sol: "SELECT SUM(bewohner.gold) FROM bewohner, dorf WHERE dorf.dorfnr = bewohner.dorfnr AND dorf.name = 'Gurkendorf'", auto: true, l: "avatar_schwert", r: "dieter", pts: 0},
+    {desc: "Wie viel Gold besitzen die Händler, Kaufmänner und Bäcker zusammen?", sol: "SELECT SUM(bewohner.gold) FROM bewohner WHERE beruf = 'Haendler' OR beruf = 'Kaufmann' OR beruf = 'Baecker'", auto: false, l: "avatar_schwert", r: "dieter", pts: 2, ans: "Das ist viel zu wenig."},
+    {desc: "Gesamte und durchschnittliche Goldvorräte pro Beruf.", sol: "SELECT beruf, SUM(gold), AVG(gold) FROM bewohner GROUP BY beruf ORDER BY AVG(gold)", auto: true, l: "avatar_schwert", r: "dieter", pts: 0},
+    {desc: "Durchschnitt Gold nach Status.", sol: "SELECT status, AVG(gold) FROM bewohner GROUP BY status", auto: false, l: "avatar_schwert", r: "dieter", pts: 3, ans: "Ich muss die bösen Bewohner ausrauben."},
+    {desc: "Dann kann ich auch gleich Dirty Dieter mit dem Schwert töten und den Piloten befreien.", sol: "DELETE FROM bewohner WHERE name = 'Dirty Dieter'", auto: true, l: "avatar_schwert_sehr_wuetend", r: "dieter", pts: 0},
+    {desc: "Heeeey! Jetzt bin ich aber sauer! Was tust du wohl als nächstes, Peter?", sol: "DELETE FROM bewohner WHERE name = 'Dirty Doerthe'", auto: false, l: "avatar_schwert_sehr_wuetend", r: "doerthe", pts: 2},
+    {desc: "Yeah! Jetzt muss ich nur noch den Piloten befreien.", sol: "UPDATE bewohner SET status = 'friedlich' WHERE beruf = 'Pilot'", auto: false, l: "avatar_schwert_freuend", r: "arthur", pts: 2},
+    {desc: "Vielen vielen Dank, Peter! Jetzt fliege ich dich nach Hause.", sol: "UPDATE bewohner SET status = 'ausgewandert' WHERE bewohnernr = 20", auto: true, l: "avatar_schwert_freuend", r: "arthur_frei", pts: 0}
+];
+
+let db;
+let currentExercise = 0;
+let playerName = "Fremder";
+
+window.onload = function() {
+    maxPointsPossible = exercises.reduce((acc, ex) => acc + ex.pts, 0);
+    document.getElementById('max-score').innerText = maxPointsPossible;
+    initSCORM();
+    if (scormAPI) scormAPI.LMSSetValue("cmi.core.score.max", maxPointsPossible.toString());
+
+    initSqlJs().then(SQL => {
+        db = new SQL.Database();
+db.run(`
+    -- Dörfer anlegen
+    CREATE TABLE dorf (dorfnr INT PRIMARY KEY, name TEXT, haeuptling INT);
+    INSERT INTO dorf VALUES (1, 'Affenstadt', 1), (2, 'Gurkendorf', 6), (3, 'Zwiebelhausen', 13);
+
+    -- Bewohner anlegen (IDs 1 bis 20)
+    CREATE TABLE bewohner (bewohnernr INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, dorfnr INT, geschlecht TEXT, beruf TEXT, gold INT, status TEXT);
+    INSERT INTO bewohner (bewohnernr, name, dorfnr, geschlecht, beruf, gold, status) VALUES 
+    (1, 'Paul Backmann', 1, 'm', 'Baecker', 850, 'friedlich'),
+    (2, 'Ernst Peng', 3, 'm', 'Waffenschmied', 280, 'friedlich'),
+    (3, 'Rita Ochse', 1, 'w', 'Baecker', 350, 'friedlich'),
+    (4, 'Carl Ochse', 1, 'm', 'Kaufmann', 250, 'friedlich'),
+    (5, 'Dirty Dieter', 3, 'm', 'Schmied', 650, 'boese'),
+    (6, 'Gerd Schlachter', 2, 'm', 'Metzger', 4850, 'boese'),
+    (7, 'Peter Schlachter', 3, 'm', 'Metzger', 3250, 'boese'),
+    (8, 'Arthur Schneiderpaule', 2, 'm', 'Pilot', 490, 'gefangen'),
+    (9, 'Tanja Trommler', 1, 'w', 'Baecker', 550, 'boese'),
+    (10, 'Peter Trommler', 1, 'm', 'Schmied', 600, 'friedlich'),
+    (11, 'Dirty Doerthe', 3, 'w', 'Erntehelfer', 10, 'boese'),
+    (12, 'Otto Armleuchter', 2, 'm', 'Haendler', 680, 'friedlich'),
+    (13, 'Fritz Dichter', 3, 'm', 'Hoerbuchautor', 420, 'friedlich'),
+    (14, 'Enrico Zimmermann', 3, 'm', 'Waffenschmied', 510, 'boese'),
+    (15, 'Helga Rasenkopf', 2, 'w', 'Haendler', 680, 'friedlich'),
+    (16, 'Irene Hutmacher', 1, 'w', 'Haendler', 770, 'boese'),
+    (17, 'Erich Rasenkopf', 3, 'm', 'Metzger', 990, 'friedlich'),
+    (18, 'Rudolf Gaul', 3, 'm', 'Hufschmied', 390, 'friedlich'),
+    (19, 'Anna Flysh', 2, 'w', 'Metzger', 2280, 'friedlich');
+
+    -- Gegenstände anlegen
+    CREATE TABLE gegenstand (gegenstand TEXT PRIMARY KEY, besitzer INT);
+    INSERT INTO gegenstand VALUES 
+    ('Teekanne', NULL), 
+    ('Spazierstock', 5), 
+    ('Hammer', 2), 
+    ('Ring', NULL), 
+    ('Kaffeetasse', NULL), 
+    ('Eimer', NULL), 
+    ('Seil', 17), 
+    ('Pappkarton', NULL), 
+    ('Gluehbirne', NULL);
+`);
+        renderStep();
+    });
+};
+
+function renderStep() {
+    const ex = exercises[currentExercise];
+    helpUsedForCurrent = false;
+    const funnyName = playerName.replace(/[aeiou]/gi, 'o');
+    let txt = ex.desc.replace(/%%%PLAYER_NAME%%%/g, playerName).replace(/%%%PLAYER_NAME_FUNNY%%%/g, funnyName);
+    if(ex.desc2) txt += "\n\n" + ex.desc2.replace(/%%%PLAYER_NAME%%%/g, playerName).replace(/%%%PLAYER_NAME_FUNNY%%%/g, funnyName);
+    document.getElementById('story-scroll').innerText = txt;
+    document.getElementById('status-msg').style.display = "none";
+    document.getElementById('user-score').innerText = userScore;
+    document.getElementById('img-l').style.backgroundImage = ex.l ? `url('images/wf/${ex.l}.png')` : "none";
+    document.getElementById('img-r').style.backgroundImage = ex.r ? `url('images/wf/${ex.r}.png')` : "none";
+
+    if (ex.auto) {
+        logQuery(ex.sol + " (Auto)");
+        runQuery(ex.sol);
+        document.getElementById('btn-next').disabled = false;
+        document.getElementById('btn-run').disabled = true;
+        document.getElementById('btn-help').disabled = true;
+    } else {
+        document.getElementById('btn-next').disabled = true;
+        document.getElementById('btn-run').disabled = false;
+        document.getElementById('btn-help').disabled = false;
+    }
+}
+
+function processSQL() {
+    let userQuery = document.getElementById('sql-editor').value.trim();
+    if (userQuery.endsWith(';')) userQuery = userQuery.slice(0, -1).trim();
+    const ex = exercises[currentExercise];
+    logQuery(userQuery);
+
+    runQuery(userQuery);
+
+    const normalizedUser = userQuery.replace(/"/g, "'");
+    const normalizedSol = ex.sol.replace(/"/g, "'");
+    let isCorrect = false;
+
+    try {
+        db.run("BEGIN TRANSACTION");
+        let userRes = JSON.stringify(db.exec(normalizedUser));
+        db.run("ROLLBACK");
+        db.run("BEGIN TRANSACTION");
+        let solRes = JSON.stringify(db.exec(normalizedSol));
+        db.run("ROLLBACK");
+        if (userRes === solRes) isCorrect = true;
+    } catch (e) { isCorrect = false; }
+
+    if (isCorrect) {
+        if (scormAPI) {
+            let n = interactionCount;
+            scormAPI.LMSSetValue(`cmi.interactions.${n}.id`, "Task_" + currentExercise);
+            scormAPI.LMSSetValue(`cmi.interactions.${n}.student_response`, userQuery.substring(0,255));
+            scormAPI.LMSSetValue(`cmi.interactions.${n}.result`, "correct");
+            interactionCount++;
+        }
+        if (!helpUsedForCurrent && !ex.auto) {
+            userScore += ex.pts;
+            if(scormAPI) { scormAPI.LMSSetValue("cmi.core.score.raw", userScore.toString()); scormAPI.LMSCommit(""); }
+        }
+        showStatus(ex.ans || `Korrekt! (+${helpUsedForCurrent ? 0 : ex.pts} Pkt.)`, "#2ecc71");
+        document.getElementById('btn-next').disabled = false;
+        document.getElementById('btn-run').disabled = true;
+        document.getElementById('btn-help').disabled = true;
+    } else {
+        if (scormAPI) {
+            let n = interactionCount;
+            scormAPI.LMSSetValue(`cmi.interactions.${n}.id`, "Task_" + currentExercise);
+            scormAPI.LMSSetValue(`cmi.interactions.${n}.student_response`, userQuery.substring(0,255));
+            scormAPI.LMSSetValue(`cmi.interactions.${n}.result`, "wrong");
+            interactionCount++;
+        }
+        showStatus("Falsches Ergebnis. Prüfe deine Abfrage!", "white");
+    }
+}
+
+function runQuery(sql) {
+    const head = document.getElementById('table-head');
+    const body = document.getElementById('table-body');
+    head.innerHTML = ""; body.innerHTML = "";
+    try {
+        const res = db.exec(sql);
+        if (res.length > 0) {
+            let trH = "<tr>"; res[0].columns.forEach(col => trH += `<th>${col}</th>`); head.innerHTML = trH + "</tr>";
+            res[0].values.forEach(row => {
+                let trB = "<tr>"; row.forEach(val => trB += `<td>${val === null ? 'NULL' : val}</td>`); body.innerHTML += trB + "</tr>";
+            });
+        } else {
+            head.innerHTML = "<tr><th>Status</th></tr>";
+            body.innerHTML = "<tr><td>Befehl erfolgreich (Keine Zeilen zurückgegeben).</td></tr>";
+        }
+        const nameUpdate = db.exec("SELECT name FROM bewohner WHERE bewohnernr = 20");
+        if(nameUpdate.length > 0 && nameUpdate[0].values[0][0] !== "Fremder") playerName = nameUpdate[0].values[0][0];
+    } catch (e) {
+        head.innerHTML = "<tr><th>SQL-Fehler</th></tr>";
+        body.innerHTML = `<tr><td style="color:red">${e.message}</td></tr>`;
+    }
+}
+
+function showStatus(msg, color) { const s = document.getElementById('status-msg'); s.innerText = msg; s.style.display = "block"; s.style.color = color; }
+function logQuery(sql) { const log = document.getElementById('query-log'); log.innerHTML += `> ${sql}<br>`; log.scrollTop = log.scrollHeight; }
+function showSolution() { helpUsedForCurrent = true; document.getElementById('sql-editor').value = exercises[currentExercise].sol; showStatus("Lösung geladen. (0 Pkt.)", "var(--yellow)"); }
+
+function nextStep() {
+    currentExercise++;
+    document.getElementById('sql-editor').value = "";
+    document.getElementById('table-head').innerHTML = "";
+    document.getElementById('table-body').innerHTML = '<tr><td style="padding:20px; color:#999">Warte auf neuen Befehl...</td></tr>';
+    if (currentExercise < exercises.length) renderStep();
+    else { if (scormAPI) { scormAPI.LMSSetValue("cmi.core.lesson_status", "completed"); scormAPI.LMSCommit(""); } showStatus("Spiel beendet! Bitte klicke auf BEENDEN.", "#2ecc71"); }
+}
+</script>
+</body>
+</html>
